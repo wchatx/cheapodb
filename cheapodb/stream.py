@@ -1,42 +1,82 @@
 import json
+import logging
 import time
 from itertools import islice, chain
 from typing import Union, Generator, List
 
-import boto3
 from joblib import Parallel, delayed
+import backoff
+
+from cheapodb import Database
+
+
+log = logging.getLogger(__name__)
 
 
 class Stream(object):
-    def __init__(self, name: str):
+    def __init__(self, name: str, db: Database):
         self.name = name
-        self.firehose = boto3.client('firehose')
+        self.db = db
 
-    def initialize(self, config):
+    @backoff.on_exception(backoff.expo,
+                          Exception,
+                          max_tries=8)
+    def initialize(self, buffering: dict = None, compression: str = 'UNCOMPRESSED', prefix: str = None,
+                   error_prefix: str = None):
         if self.exists:
             return
-        config = json.loads(config)
-        response = self.firehose.create_delivery_stream(**config)
+
+        if not buffering:
+            buffering = dict(
+                SizeInMBs=5,
+                IntervalInSeconds=300
+            )
+        s3config = dict(
+            RoleARN=self.db.iam_role_arn,
+            BucketARN=f'arn:aws:s3:::{self.db.name}',
+            BufferingHints=buffering,
+            CompressionFormat=compression,
+
+        )
+        if prefix:
+            s3config['Prefix'] = prefix
+        if error_prefix:
+            s3config['ErrorOutputPrefix'] = error_prefix
+        payload = dict(
+            DeliveryStreamName=self.name,
+            DeliveryStreamType='DirectPut',
+            ExtendedS3DestinationConfiguration=s3config
+        )
+        response = self.db.firehose.create_delivery_stream(**payload)
         while True:
-            if self.exists:
+            status = self.exists
+            if status and status['DeliveryStreamDescription']['DeliveryStreamStatus'] == 'ACTIVE':
                 break
-            time.sleep(10)
+
+            elif status and status['DeliveryStreamDescription']['DeliveryStreamStatus'] == 'CREATING':
+                time.sleep(10)
+                continue
+
+            else:
+                raise Exception(f'Delivery stream status was not one of ACTIVE or CREATING')
 
         return response
 
     @property
-    def describe(self):
-        return self.firehose.describe_delivery_stream(
+    def describe(self) -> dict:
+        response = self.db.firehose.describe_delivery_stream(
             DeliveryStreamName=self.name
         )
+        return response
 
     @property
-    def exists(self) -> bool:
+    def exists(self) -> Union[dict, None]:
         try:
-            self.describe()
-            return True
-        except self.firehose.exceptions.ResourceNotFoundException:
-            return False
+            response = self.describe
+            log.debug(response)
+            return response
+        except self.db.firehose.exceptions.ResourceNotFoundException:
+            return None
 
     @staticmethod
     def _chunks(iterable: Union[Generator, list], size: int):
@@ -52,7 +92,7 @@ class Stream(object):
         :param threads: number of threads for batch putting
         :return:
         """
-        Parallel(n_jobs=threads, prefer='threads')(delayed(self.firehose.put_record_batch)(
+        Parallel(n_jobs=threads, prefer='threads')(delayed(self.db.firehose.put_record_batch)(
             DeliveryStreamName=self.name,
             Records=[{'Data': json.dumps(x).encode()} for x in chunk]
         ) for chunk in self._chunks(records, size=500))

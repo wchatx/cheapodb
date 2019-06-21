@@ -40,13 +40,15 @@ class Database(object):
         )
         self.s3 = self.session.resource('s3')
         self.glue = self.session.client('glue')
+        self.firehose = self.session.client('firehose')
         self.bucket = self.s3.Bucket(self.name)
 
         if create_iam_role and not self.iam_role_arn:
             self.iam_role_arn = create_cheapodb_role(
                 name=f'{self.name}-CheapoDBExecutionRole',
                 client=self.session.client('iam'),
-                bucket=self.name
+                bucket=self.name,
+                account=boto3.client('sts').get_caller_identity().get('Account')
             )
 
         elif not create_iam_role and not self.iam_role_arn:

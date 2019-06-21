@@ -19,15 +19,17 @@ def normalize_table_name(name):
     return name
 
 
-def create_cheapodb_role(name, client, bucket) -> str:
+def create_cheapodb_role(name, client, bucket: str, account: str) -> str:
     """
     Create an AWS IAM service role with the appropriate permissions for Glue and the database's S3 bucket.
 
     :param name:
     :param client:
     :param bucket:
+    :param account:
     :return:
     """
+    log.info(f'Creating role. bucket: {bucket}, account: {account}')
     try:
         response = client.create_role(
             RoleName=name,
@@ -43,6 +45,19 @@ def create_cheapodb_role(name, client, bucket) -> str:
                             'Service': 'glue.amazonaws.com'
                         },
                         'Action': 'sts:AssumeRole'
+                    },
+                    {
+                        'Sid': '',
+                        'Effect': 'Allow',
+                        'Principal': {
+                            'Service': 'firehose.amazonaws.com'
+                        },
+                        'Action': 'sts:AssumeRole',
+                        'Condition': {
+                            'StringEquals': {
+                                'sts:ExternalId': account
+                            }
+                        }
                     }
                 ]
             ))
@@ -65,10 +80,28 @@ def create_cheapodb_role(name, client, bucket) -> str:
                         'Effect': 'Allow',
                         'Action': [
                             's3:GetObject',
-                            's3:PutObject'
+                            's3:PutObject',
+                            's3:AbortMultipartUpload',
+                            's3:GetBucketLocation',
+                            's3:ListBucket',
+                            's3:ListBucketMultipartUploads',
                         ],
                         'Resource': [
-                            f'arn:aws:s3:::{bucket}*'
+                            f'arn:aws:s3:::{bucket}',
+                            f'arn:aws:s3:::{bucket}/'
+                        ]
+                    },
+                    {
+                        'Effect': 'Allow',
+                        'Action': [
+                            'firehose:CreateDeliveryStream',
+                            'firehose:DeleteDeliveryStream',
+                            'firehose:PutRecord',
+                            'firehose:PutRecordBatch',
+                            'firehose:UpdateDestination'
+                        ],
+                        'Resource': [
+                            f'arn:aws:firehose:us-east-1:{account}:deliverystream/*'
                         ]
                     }
                 ]
@@ -77,7 +110,7 @@ def create_cheapodb_role(name, client, bucket) -> str:
         log.debug(response)
     except client.exceptions.EntityAlreadyExistsException:
         msg = f'Role already exists for database: CheapoDBRole-{bucket}. ' \
-              f'Provide the role ARN as iam_role_arn.'
+            f'Provide the role ARN as iam_role_arn.'
         raise CheapoDBException(msg)
 
     return iam_role_arn
