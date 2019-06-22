@@ -1,12 +1,23 @@
+import os
 import json
 import logging
 from datetime import datetime
+
+import boto3
 
 log = logging.getLogger(__name__)
 
 
 class CheapoDBException(Exception):
     pass
+
+
+def create_session(**kwargs):
+    return boto3.session.Session(
+        region_name=kwargs.get('aws_default_region', os.getenv('AWS_DEFAULT_REGION')),
+        aws_access_key_id=kwargs.get('aws_access_key_id', os.getenv('AWS_ACCESS_KEY_ID')),
+        aws_secret_access_key=kwargs.get('aws_secret_access_key', os.getenv('AWS_SECRET_ACCESS_KEY'))
+    )
 
 
 def normalize_table_name(name):

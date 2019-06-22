@@ -4,4 +4,3 @@ from cheapodb.stream import Stream
 
 __all__ = ['Database', 'Table', 'Stream']
 
-

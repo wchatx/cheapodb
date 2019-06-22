@@ -8,7 +8,7 @@ import boto3
 from pyathena import connect
 from pyathena.cursor import Cursor
 
-from cheapodb.utils import CheapoDBException, create_cheapodb_role, normalize_table_name
+from cheapodb.utils import CheapoDBException, create_cheapodb_role, normalize_table_name, create_session
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,18 +26,14 @@ class Database(object):
     Provides methods for Glue, Athena and S3
     """
     def __init__(self, name: str, description: str = None, auto_create=False, results_prefix='results/',
-                 create_iam_role=False, iam_role_arn=None, **kwargs):
+                 create_iam_role=False, iam_role_arn=None):
         self.name = name
         self.description = description
         self.auto_create = auto_create
         self.results_prefix = results_prefix
         self.iam_role_arn = iam_role_arn
 
-        self.session = boto3.session.Session(
-            region_name=kwargs.get('aws_default_region', os.getenv('AWS_DEFAULT_REGION')),
-            aws_access_key_id=kwargs.get('aws_access_key_id', os.getenv('AWS_ACCESS_KEY_ID')),
-            aws_secret_access_key=kwargs.get('aws_secret_access_key', os.getenv('AWS_SECRET_ACCESS_KEY'))
-        )
+        self.session = create_session()
         self.s3 = self.session.resource('s3')
         self.glue = self.session.client('glue')
         self.firehose = self.session.client('firehose')
@@ -97,17 +93,15 @@ class Database(object):
         if not results_path:
             results_path = f's3://{self.bucket.name}/{self.results_prefix}'
 
-        cursor = self.export(sql, results_path)
+        cursor = self.execute(sql, results_path)
         columns = [column[0] for column in cursor.description]
         log.info(cursor.description)
         for row in cursor:
             yield dict(zip(columns, row))
 
-    def export(self, sql: str, results_path: str) -> Cursor:
+    def execute(self, sql: str, results_path: str) -> Cursor:
         """
         Execute a query and return the cursor.
-
-        Useful for building the athena query results as a file export to a destination bucket/prefix
 
         :param sql: the Athena-compliant SQL to execute
         :param results_path: required S3 path to write export
