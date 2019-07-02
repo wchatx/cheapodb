@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from urllib.parse import urlencode
 from typing import List
@@ -126,7 +127,7 @@ class Table(object):
         df.to_parquet(path=target, **kwargs)
         return
 
-    def as_geojson(self, df: DataFrame, compression=None, **kwargs) -> None:
+    def as_json(self, df: DataFrame, compression=None, **kwargs) -> None:
         """
 
         :param df:
@@ -134,9 +135,6 @@ class Table(object):
         :param kwargs:
         :return:
         """
-        # import geojson
-        # from geomet.wkt import dumps
-
         target = f's3://{os.path.join(self.db.name, self.prefix, self.name)}'
         df.to_json(target, compression=compression, **kwargs)
         return
@@ -169,7 +167,7 @@ class Table(object):
             log.info(f'Deleting table {self.prefix}_{self.name}')
             response = self.db.glue.delete_table(
                 DatabaseName=self.db.name,
-                Name=f'{self.prefix}-{self.name}'
+                Name=f'{self.prefix}_{self.name}'
             )
             log.debug(response)
             log.info(f'Deleted table {self.prefix}_{self.name}')
@@ -186,5 +184,16 @@ class Table(object):
         :return:
         """
         target = f's3://{os.path.join(self.db.name, self.prefix, self.name)}'
-        df.to_parquet(path=target, engine='fastparquet', **kwargs)
+        while True:
+            try:
+                df.to_parquet(path=target, engine='fastparquet', dtype=lambda x: dtype if dtype else None, **kwargs)
+                break
+            except ValueError as e:
+                dtype = dict()
+                type_errors = re.findall(
+                    pattern=r'\| (.*)( )*\| ([a-z]*) \|',
+                    string=str(e)
+                )
+                dtype.update({x[0].strip(): x[2] for x in type_errors})
+
         return
